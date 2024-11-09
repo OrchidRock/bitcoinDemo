@@ -33,6 +33,9 @@ class FieldElement:
         return self.__class__(num, self.prime)
 
     def __mul__(self, other):
+        if not isinstance(other, self.__class__):
+            num = (self.num * other) % self.prime
+            return self.__class__(num, self.prime)
         if self.prime != other.prime:
             raise TypeError('Cannot multiply two numbers in different fields.')
         num = (self.num * other.num) % self.prime
@@ -71,6 +74,7 @@ if __name__ == '__main__':
 
     h = FieldElement(8, 13)
     print(a**-3)
+    print(a*3)
 
 
 
