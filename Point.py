@@ -51,13 +51,13 @@ class Point:
 
     def __rmul__(self, coefficient):
         coef = coefficient
-        current = self  # <1>
-        result = self.__class__(None, None, self.a, self.b)  # <2>
+        current = self
+        result = self.__class__(None, None, self.a, self.b)
         while coef:
-            if coef & 1:  # <3>
+            if coef & 1:
                 result += current
-            current += current  # <4>
-            coef >>= 1  # <5>
+            current += current
+            coef >>= 1
         return result
 
 
