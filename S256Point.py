@@ -1,7 +1,9 @@
 from unittest import TestCase
 
+from AddressCoder import hash160, encode_base58_checksum
 from Point import  Point
-from S256Field import S256Field
+from S256Field import S256Field, SECP_256K1_P
+from Signature import Signature
 
 SECP_256K1_A = 0
 SECP_256K1_B = 7
@@ -32,6 +34,53 @@ class S256Point(Point):
         v = sig.r * s_inv % SECP_256K1_N
         total = u * SECP_256K1_G + v * self
         return total.x.num == sig.r
+
+    def sec(self, compressed=True):
+        '''returns the binary version of the SEC format'''
+        if compressed:
+            if self.y.num % 2 == 0:
+                return b'\x02' + self.x.num.to_bytes(32, 'big')
+            else:
+                return b'\x03' + self.x.num.to_bytes(32, 'big')
+        else:
+            return b'\x04' + self.x.num.to_bytes(32, 'big') + \
+                self.y.num.to_bytes(32, 'big')
+
+    @classmethod
+    def parse(self, sec_bin):
+        '''returns a Point object from a SEC binary (not hex)'''
+        if sec_bin[0] == 4:
+            x = int.from_bytes(sec_bin[1:33], 'big')
+            y = int.from_bytes(sec_bin[33:65], 'big')
+            return S256Point(x=x, y=y)
+        is_even = sec_bin[0] == 2
+        x = S256Field(int.from_bytes(sec_bin[1:], 'big'))
+        # right side of the equation y^2 = x^3 + 7
+        alpha = x ** 3 + S256Field(SECP_256K1_B)
+        # solve for left side
+        beta = alpha.sqrt()
+        if beta.num % 2 == 0:
+            even_beta = beta
+            odd_beta = S256Field(SECP_256K1_P - beta.num)
+        else:
+            even_beta = S256Field(SECP_256K1_P - beta.num)
+            odd_beta = beta
+        if is_even:
+            return S256Point(x, even_beta)
+        else:
+            return S256Point(x, odd_beta)
+
+    def address(self, compressed=True, testnet=False):
+        '''Returns the address string'''
+        h160 = self.hash160(compressed)
+        if testnet:
+            prefix = b'\x6f'
+        else:
+            prefix = b'\x00'
+        return encode_base58_checksum(prefix + h160)
+
+    def hash160(self, compressed):
+        return hash160(self.sec(compressed))
 
 
 SECP_256K1_G = S256Point(
@@ -73,10 +122,48 @@ class S256Test(TestCase):
         s = 0xc7207fee197d27c618aea621406f6bf5ef6fca38681d82b2f06fddbdce6feab6
         self.assertTrue(point.verify(z, Signature(r, s)))
 
-class Signature:
-    def __init__(self, r, s):
-        self.r = r
-        self.s = s
+    def test_sec(self):
+        coefficient = 999**3
+        uncompressed = '049d5ca49670cbe4c3bfa84c96a8c87df086c6ea6a24ba6b809c9de234496808d56fa15cc7f3d38cda98dee2419f415b7513dde1301f8643cd9245aea7f3f911f9'
+        compressed = '039d5ca49670cbe4c3bfa84c96a8c87df086c6ea6a24ba6b809c9de234496808d5'
+        point = coefficient * SECP_256K1_G
+        self.assertEqual(point.sec(compressed=False), bytes.fromhex(uncompressed))
+        self.assertEqual(point.sec(compressed=True), bytes.fromhex(compressed))
+        coefficient = 123
+        uncompressed = '04a598a8030da6d86c6bc7f2f5144ea549d28211ea58faa70ebf4c1e665c1fe9b5204b5d6f84822c307e4b4a7140737aec23fc63b65b35f86a10026dbd2d864e6b'
+        compressed = '03a598a8030da6d86c6bc7f2f5144ea549d28211ea58faa70ebf4c1e665c1fe9b5'
+        point = coefficient * SECP_256K1_G
+        self.assertEqual(point.sec(compressed=False), bytes.fromhex(uncompressed))
+        self.assertEqual(point.sec(compressed=True), bytes.fromhex(compressed))
+        coefficient = 42424242
+        uncompressed = '04aee2e7d843f7430097859e2bc603abcc3274ff8169c1a469fee0f20614066f8e21ec53f40efac47ac1c5211b2123527e0e9b57ede790c4da1e72c91fb7da54a3'
+        compressed = '03aee2e7d843f7430097859e2bc603abcc3274ff8169c1a469fee0f20614066f8e'
+        point = coefficient * SECP_256K1_G
+        self.assertEqual(point.sec(compressed=False), bytes.fromhex(uncompressed))
+        self.assertEqual(point.sec(compressed=True), bytes.fromhex(compressed))
 
-    def __repr__(self):
-        return 'Signature({:x},{:x})'.format(self.r, self.s)
+    def test_address(self):
+        secret = 888 ** 3
+        mainnet_address = '148dY81A9BmdpMhvYEVznrM45kWN32vSCN'
+        testnet_address = 'mieaqB68xDCtbUBYFoUNcmZNwk74xcBfTP'
+        point = secret * SECP_256K1_G
+        self.assertEqual(
+            point.address(compressed=True, testnet=False), mainnet_address)
+        self.assertEqual(
+            point.address(compressed=True, testnet=True), testnet_address)
+        secret = 321
+        mainnet_address = '1S6g2xBJSED7Qr9CYZib5f4PYVhHZiVfj'
+        testnet_address = 'mfx3y63A7TfTtXKkv7Y6QzsPFY6QCBCXiP'
+        point = secret * SECP_256K1_G
+        self.assertEqual(
+            point.address(compressed=False, testnet=False), mainnet_address)
+        self.assertEqual(
+            point.address(compressed=False, testnet=True), testnet_address)
+        secret = 4242424242
+        mainnet_address = '1226JSptcStqn4Yq9aAmNXdwdc2ixuH9nb'
+        testnet_address = 'mgY3bVusRUL6ZB2Ss999CSrGVbdRwVpM8s'
+        point = secret * SECP_256K1_G
+        self.assertEqual(
+            point.address(compressed=False, testnet=False), mainnet_address)
+        self.assertEqual(
+            point.address(compressed=False, testnet=True), testnet_address)

@@ -9,6 +9,8 @@ class S256Field(FieldElement):
     def __repr__(self):
         return '{:x}'.format(self.num).zfill(64)
 
+    def sqrt(self):
+        return self ** (( SECP_256K1_P + 1) // 4)
 
 
 
