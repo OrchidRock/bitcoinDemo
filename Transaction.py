@@ -3,6 +3,8 @@ from unittest import TestCase
 from Crypto.Util.py3compat import BytesIO
 from io import BytesIO
 from AddressCoder import double_hash256
+from Script import Script
+
 
 def read_varint(s):
     '''
@@ -76,8 +78,23 @@ class Transaction:
         pass
 
     @classmethod
-    def parse(cls, serialized, testnet=False):
-        raise NotImplementedError
+    def parse(cls, s, testnet=False):
+        '''Takes a byte stream and parses the transaction at the start
+        return a Tx object
+        '''
+        version = int.from_bytes(s.read(4), 'little')
+        num_inputs = read_varint(s)
+        inputs = []
+        for _ in range(num_inputs):
+            inputs.append(TransactionInput.parse(s))
+
+        num_outputs = read_varint(s)
+        outputs = []
+        for _ in range(num_outputs):
+            outputs.append(TransactionOutput.parse(s))
+
+        lock_time = int.from_bytes(s.read(4), 'little')
+        return cls(version, inputs, outputs, lock_time, testnet)
 
 
 class TransactionInput:
@@ -90,8 +107,31 @@ class TransactionInput:
             self.script_sig = script_sig
         self.sequence = sequence
 
+    def __repr__(self):
+        return '{}:{}'.format(self.prev_tx.hex(), self.prev_index)
+
+    @classmethod
+    def parse(cls, s):
+        prev_tx = s.read(32)[::-1]
+        prev_index = int.from_bytes(s.read(4), 'little')
+        script_sig = Script.parse(s)
+        sequence = int.from_bytes(s.read(4), 'little')
+        return cls(prev_tx, prev_index, script_sig, sequence)
 
 
+class TransactionOutput:
+    def __init__(self, amount, script_pubkey):
+        self.amount = amount
+        self.script_pubkey = script_pubkey
+
+    def __repr__(self):
+        return '{}:{}'.format(self.amount, self.script_pubkey)
+
+    @classmethod
+    def parse(cls, s):
+        amount = int.from_bytes(s.read(8), 'little')
+        script_pubkey = Script.parse(s)
+        return cls(amount, script_pubkey)
 
 class TransactionTest(TestCase):
 
