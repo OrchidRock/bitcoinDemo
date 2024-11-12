@@ -23,9 +23,8 @@ class S256Point(Point):
         else:
             return 'S256Point({}, {})'.format(self.x, self.y)
 
-    # tag::source8[]
     def __rmul__(self, coefficient):
-        coef = coefficient % SECP_256K1_N  # <1>
+        coef = coefficient % SECP_256K1_N
         return super().__rmul__(coef)
 
     def verify(self, z, sig):
@@ -36,7 +35,9 @@ class S256Point(Point):
         return total.x.num == sig.r
 
     def sec(self, compressed=True):
-        '''returns the binary version of the SEC format'''
+        '''
+        returns the binary version of the SEC format
+        '''
         if compressed:
             if self.y.num % 2 == 0:
                 return b'\x02' + self.x.num.to_bytes(32, 'big')
@@ -48,7 +49,9 @@ class S256Point(Point):
 
     @classmethod
     def parse(self, sec_bin):
-        '''returns a Point object from a SEC binary (not hex)'''
+        '''
+        returns a Point object from a SEC binary (not hex)
+        '''
         if sec_bin[0] == 4:
             x = int.from_bytes(sec_bin[1:33], 'big')
             y = int.from_bytes(sec_bin[33:65], 'big')
@@ -71,7 +74,9 @@ class S256Point(Point):
             return S256Point(x, odd_beta)
 
     def address(self, compressed=True, testnet=False):
-        '''Returns the address string'''
+        '''
+        Returns the address string
+        '''
         h160 = self.hash160(compressed)
         if testnet:
             prefix = b'\x6f'

@@ -1,7 +1,7 @@
 from Crypto.Hash import SHA256
 from Crypto.Hash import RIPEMD160
 
-BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+BASE58_ALPHABET_TABLE = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 def hash160(s):
     """
@@ -24,7 +24,7 @@ def encode_base58(s):
     result = ''
     while num > 0:
         num, mod = divmod(num, 58)
-        result = BASE58_ALPHABET[mod] + result
+        result = BASE58_ALPHABET_TABLE[mod] + result
     return prefix + result
 
 def double_hash256(s):
