@@ -75,7 +75,15 @@ class Transaction:
         return double_hash256(self.serialize())[::-1]
 
     def serialize(self):
-        pass
+        result = self.version.to_bytes(4, 'little')
+        result += encode_varint(len(self.tx_ins))
+        for tx_in in self.tx_ins:
+            result += tx_in.serialize()
+        result += encode_varint(len(self.tx_outs))
+        for tx_out in self.tx_outs:
+            result += tx_out.serialize()
+        result += self.lock_time.to_bytes(4, 'little')
+        return result
 
     @classmethod
     def parse(cls, s, testnet=False):
@@ -110,6 +118,28 @@ class TransactionInput:
     def __repr__(self):
         return '{}:{}'.format(self.prev_tx.hex(), self.prev_index)
 
+    def fetch_transactions(self, testnet=False):
+        return TransactionFetcher.fetch(self.prev_tx.hex(), testnet)
+
+    def value(self, testnet=False):
+        """
+        Get the output value by looking up the tx hash.
+        Returns the amount in satoshi.
+        """
+        tx = self.fetch_transactions(testnet=testnet)
+        return tx.tx_outs[self.prev_index].amount
+
+    def script_pubkey(self, testnet=False):
+        tx = self.fetch_transactions(testnet=testnet)
+        return tx.tx_outs[self.prev_index].script_pubkey
+
+    def serialize(self):
+        result = self.prev_tx[::-1]
+        result += self.prev_index.to_bytes(4, 'little')
+        result += self.script_sig.serialize()
+        result += self.sequence.to_bytes(4, 'little')
+        return result
+
     @classmethod
     def parse(cls, s):
         prev_tx = s.read(32)[::-1]
@@ -117,6 +147,9 @@ class TransactionInput:
         script_sig = Script.parse(s)
         sequence = int.from_bytes(s.read(4), 'little')
         return cls(prev_tx, prev_index, script_sig, sequence)
+
+    def fee(self):
+        pass
 
 
 class TransactionOutput:
@@ -132,6 +165,18 @@ class TransactionOutput:
         amount = int.from_bytes(s.read(8), 'little')
         script_pubkey = Script.parse(s)
         return cls(amount, script_pubkey)
+
+    def serialize(self):
+        result = self.amount.to_bytes(8, 'little')
+        result += self.script_pubkey.serialize()
+        return result
+
+
+class TransactionFetcher:
+    @classmethod
+    def fetch(cls, tx_id, testnet=False, fresh=False):
+        return Transaction(0, [], [], 0)
+
 
 class TransactionTest(TestCase):
 

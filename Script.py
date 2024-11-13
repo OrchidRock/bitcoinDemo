@@ -6,3 +6,6 @@ class Script(object):
     @classmethod
     def parse(cls, s):
         pass
+
+    def serialize(self):
+        pass
