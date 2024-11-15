@@ -1,6 +1,6 @@
 import json
+import requests
 from unittest import TestCase
-
 from Crypto.Util.py3compat import BytesIO
 from io import BytesIO
 from AddressCoder import hash256, encode_varint, read_varint
@@ -165,10 +165,10 @@ class TransactionFetcher:
             # make sure the tx we got matches to the hash we requested
             if raw[4] == 0:
                 raw = raw[:4] + raw[6:]
-                tx = Tx.parse(BytesIO(raw), testnet=testnet)
-                tx.locktime = little_endian_to_int(raw[-4:])
+                tx = Transaction.parse(BytesIO(raw), testnet=testnet)
+                tx.locktime = int.from_bytes(raw[-4:], 'little')
             else:
-                tx = Tx.parse(BytesIO(raw), testnet=testnet)
+                tx = Transaction.parse(BytesIO(raw), testnet=testnet)
             if tx.id() != tx_id:
                 raise ValueError('not the same id: {} vs {}'.format(tx.id(), tx_id))
             cls.cache[tx_id] = tx
