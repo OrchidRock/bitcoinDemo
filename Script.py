@@ -5,6 +5,15 @@ from unittest import TestCase
 from AddressCoder import encode_varint, read_varint
 from Operation import OP_CODE_NAMES, OP_CODE_FUNCTIONS
 
+def p2pkh_script(h160):
+    '''Takes a hash160 and returns the p2pkh ScriptPubKey'''
+    return Script([0x76, 0xa9, h160, 0x88, 0xac])
+
+
+def p2sh_script(h160):
+    '''Takes a hash160 and returns the p2sh ScriptPubKey'''
+    return Script([0xa9, h160, 0x87])
+
 class Script(object):
     def __init__(self, cmds=None):
         if cmds is None:

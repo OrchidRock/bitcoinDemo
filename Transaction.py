@@ -3,8 +3,13 @@ import requests
 from unittest import TestCase
 from Crypto.Util.py3compat import BytesIO
 from io import BytesIO
-from AddressCoder import hash256, encode_varint, read_varint
-from Script import Script
+from AddressCoder import hash256, encode_varint, read_varint, decode_base58
+from PrivateKey import PrivateKey
+from Script import Script, p2pkh_script
+
+SIGHASH_ALL = 1
+SIGHASH_NONE = 2
+SIGHASH_SINGLE = 3
 
 class Transaction:
     def __init__(self, version, tx_ins, tx_outs, lock_time, testnet=False):
@@ -77,6 +82,54 @@ class Transaction:
         for tx_out in self.tx_outs:
             output_total += tx_out.amount
         return input_total - output_total
+
+    def sig_hash(self, input_index):
+        target_stream = self.version.to_bytes(4, 'little')
+        target_stream += encode_varint(len(self.tx_ins))
+        for i, tx_in in enumerate(self.tx_ins):
+            if i == input_index:
+                script_sig = tx_in.script_pubkey(self.testnet)
+            else:
+                script_sig = None
+            target_stream += TransactionInput(
+                prev_tx=tx_in.prev_tx,
+                prev_index=tx_in.prev_index,
+                script_sig=script_sig,
+                sequence=tx_in.sequence,
+            ).serialize()
+        target_stream += encode_varint(len(self.tx_outs))
+        for tx_out in self.tx_outs:
+            target_stream += tx_out.serialize()
+
+        target_stream += self.lock_time.to_bytes(4, 'little')
+        target_stream += SIGHASH_ALL.to_bytes(4, 'little')
+        h256 = hash256(target_stream)
+        return int.from_bytes(h256, 'big')
+
+    def verify_input(self, input_index):
+        tx_in = self.tx_ins[input_index]
+        script_pubkey = tx_in.script_pubkey(testnet=self.testnet)
+        tx_hash = self.sig_hash(input_index)
+        combined = tx_in.script_sig + script_pubkey
+        return combined.evaluate(tx_hash)
+
+    def verify(self):
+        if self.fee() < 0:
+            return False
+        for i in range(len(self.tx_ins)):
+            if not self.verify_input(i):
+                return False
+        return True
+
+    def sign_input(self, input_index, private_key):
+        '''Signs the input using the private key'''
+        z = self.sig_hash(input_index)
+        der = private_key.sign(z).der()
+        sig = der + SIGHASH_ALL.to_bytes(1, 'big')
+        sec_pubkey = private_key.point.sec()
+        script_sig = Script([sig, sec_pubkey])
+        self.tx_ins[input_index].script_sig = script_sig
+        return self.verify_input(input_index)
 
 
 class TransactionInput:
@@ -166,11 +219,11 @@ class TransactionFetcher:
             if raw[4] == 0:
                 raw = raw[:4] + raw[6:]
                 tx = Transaction.parse(BytesIO(raw), testnet=testnet)
-                tx.locktime = int.from_bytes(raw[-4:], 'little')
+                tx.lock_time = int.from_bytes(raw[-4:], 'little')
             else:
                 tx = Transaction.parse(BytesIO(raw), testnet=testnet)
-            if tx.id() != tx_id:
-                raise ValueError('not the same id: {} vs {}'.format(tx.id(), tx_id))
+            if tx.identifier() != tx_id:
+                raise ValueError('not the same id: {} vs {}'.format(tx.identifier(), tx_id))
             cls.cache[tx_id] = tx
         cls.cache[tx_id].testnet = testnet
         return cls.cache[tx_id]
@@ -184,7 +237,7 @@ class TransactionFetcher:
             if raw[4] == 0:
                 raw = raw[:4] + raw[6:]
                 tx = Transaction.parse(BytesIO(raw))
-                tx.locktime = int.from_bytes(raw[-4:], 'little')
+                tx.lock_time = int.from_bytes(raw[-4:], 'little')
             else:
                 tx = Transaction.parse(BytesIO(raw))
             cls.cache[k] = tx
@@ -268,5 +321,63 @@ class TransactionTest(TestCase):
         tx = Transaction.parse(stream)
         self.assertEqual(tx.fee(), 140500)
 
+    def test_serialize(self):
+        raw_tx = bytes.fromhex('0100000001813f79011acb80925dfe69b3def355fe914bd1d96a3f5f71bf8303c6a989c7d1000000006b483045022100ed81ff192e75a3fd2304004dcadb746fa5e24c5031ccfcf21320b0277457c98f02207a986d955c6e0cb35d446a89d3f56100f4d7f67801c31967743a9c8e10615bed01210349fc4e631e3624a545de3f89f5d8684c7b8138bd94bdd531d2e213bf016b278afeffffff02a135ef01000000001976a914bc3b654dca7e56b04dca18f2566cdaf02e8d9ada88ac99c39800000000001976a9141c4bc762dd5423e332166702cb75f40df79fea1288ac19430600')
+        stream = BytesIO(raw_tx)
+        tx = Transaction.parse(stream)
+        self.assertEqual(tx.serialize(), raw_tx)
+
+    def test_input_value(self):
+        tx_hash = 'd1c789a9c60383bf715f3f6ad9d14b91fe55f3deb369fe5d9280cb1a01793f81'
+        index = 0
+        want = 42505594
+        tx_in = TransactionInput(bytes.fromhex(tx_hash), index)
+        self.assertEqual(tx_in.value(), want)
+
+    def test_input_pubkey(self):
+        tx_hash = 'd1c789a9c60383bf715f3f6ad9d14b91fe55f3deb369fe5d9280cb1a01793f81'
+        index = 0
+        tx_in = TransactionInput(bytes.fromhex(tx_hash), index)
+        want = bytes.fromhex('1976a914a802fc56c704ce87c42d7c92eb75e7896bdc41ae88ac')
+        self.assertEqual(tx_in.script_pubkey().serialize(), want)
+
+    def test_sig_hash(self):
+        tx = TransactionFetcher.fetch('452c629d67e41baec3ac6f04fe744b4b9617f8f859c63b3002f8684e7a4fee03')
+        want = int('27e0c5994dec7824e56dec6b2fcb342eb7cdb0d0957c2fce9882f715e85d81a6', 16)
+        self.assertEqual(tx.sig_hash(0), want)
+
+    def test_verify_p2pkh(self):
+        tx = TransactionFetcher.fetch('452c629d67e41baec3ac6f04fe744b4b9617f8f859c63b3002f8684e7a4fee03')
+        self.assertTrue(tx.verify())
+        tx = TransactionFetcher.fetch('5418099cc755cb9dd3ebc6cf1a7888ad53a1a3beb5a025bce89eb1bf7f1650a2', testnet=True)
+        self.assertTrue(tx.verify())
+
+    def test_verify_p2sh(self):
+        tx = TransactionFetcher.fetch('46df1a9484d0a81d03ce0ee543ab6e1a23ed06175c104a178268fad381216c2b')
+        self.assertTrue(tx.verify())
+
+    def test_sign_input(self):
+        private_key = PrivateKey(secret=8675309)
+        stream = BytesIO(bytes.fromhex('010000000199a24308080ab26e6fb65c4eccfadf76749bb5bfa8cb08f291320b3c21e56f0d0d00000000ffffffff02408af701000000001976a914d52ad7ca9b3d096a38e752c2018e6fbc40cdf26f88ac80969800000000001976a914507b27411ccf7f16f10297de6cef3f291623eddf88ac00000000'))
+        tx_obj = Transaction.parse(stream, testnet=True)
+        self.assertTrue(tx_obj.sign_input(0, private_key))
+        want = '010000000199a24308080ab26e6fb65c4eccfadf76749bb5bfa8cb08f291320b3c21e56f0d0d0000006b4830450221008ed46aa2cf12d6d81065bfabe903670165b538f65ee9a3385e6327d80c66d3b502203124f804410527497329ec4715e18558082d489b218677bd029e7fa306a72236012103935581e52c354cd2f484fe8ed83af7a3097005b2f9c60bff71d35bd795f54b67ffffffff02408af701000000001976a914d52ad7ca9b3d096a38e752c2018e6fbc40cdf26f88ac80969800000000001976a914507b27411ccf7f16f10297de6cef3f291623eddf88ac00000000'
+        self.assertEqual(tx_obj.serialize().hex(), want)
+
+    def test_create_transaction(self):
+        secret = int.from_bytes(hash256(b'mimoserock test bitcoin private key 2024.11.15'), 'little')
+        private_key = PrivateKey(secret=secret)
+        print(private_key.point.address(testnet=True))
+        prev_tx = bytes.fromhex('4c571c3aafabb4b0fd32777eda0ab26fb65511b863f2a047adfb6f08ecbda41c')
+        tx_in = TransactionInput(prev_tx, 0)
+        target_h160 = decode_base58('mnrVtF8DWjMu839VW3rBfgYaAfKk8983Xf')
+        target_script = p2pkh_script(target_h160)
+        target_output = TransactionOutput(amount=int(0.0005*100000000), script_pubkey=target_script)
+        change_h160 = decode_base58('mjZn9oxXYtcLsWEuZrxVgJ3RCJJthg2k4A')
+        change_script = p2pkh_script(change_h160)
+        change_output = TransactionOutput(amount=int(0.00003587*100000000), script_pubkey=change_script)
+        tx_obj = Transaction(1, [tx_in], [change_output, target_output], 0, True)
+        tx_obj.sign_input(0, private_key)
+        print(tx_obj.serialize().hex())
 
 

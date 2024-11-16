@@ -11,6 +11,16 @@ def hash160(s):
     """
     return RIPEMD160.new(SHA256.new(s).digest()).digest()
 
+def decode_base58(s):
+    num = 0
+    for c in s:
+        num *= 58
+        num += BASE58_ALPHABET_TABLE.index(c)
+    combined = num.to_bytes(25, byteorder='big')
+    checksum = combined[-4:]
+    if hash256(combined[:-4])[:4] != checksum:
+        raise ValueError('bad address: {} {}'.format(checksum, hash256(combined[:-4])[:4]))
+    return combined[1:-4]
 
 def encode_base58(s):
     count = 0
