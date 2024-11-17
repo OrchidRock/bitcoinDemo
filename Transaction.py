@@ -83,12 +83,15 @@ class Transaction:
             output_total += tx_out.amount
         return input_total - output_total
 
-    def sig_hash(self, input_index):
+    def sig_hash(self, input_index, redeem_script=None):
         target_stream = self.version.to_bytes(4, 'little')
         target_stream += encode_varint(len(self.tx_ins))
         for i, tx_in in enumerate(self.tx_ins):
             if i == input_index:
-                script_sig = tx_in.script_pubkey(self.testnet)
+                if redeem_script:
+                    script_sig = redeem_script
+                else:
+                    script_sig = tx_in.script_pubkey(self.testnet)
             else:
                 script_sig = None
             target_stream += TransactionInput(
@@ -109,7 +112,14 @@ class Transaction:
     def verify_input(self, input_index):
         tx_in = self.tx_ins[input_index]
         script_pubkey = tx_in.script_pubkey(testnet=self.testnet)
-        tx_hash = self.sig_hash(input_index)
+        if script_pubkey.is_p2sh_script_pubkey():
+            # the last cmd in a p2sh is the RedeemScript
+            cmd = tx_in.script_sig.cmds[-1]
+            raw_redeem = encode_varint(len(cmd)) + cmd
+            redeem_script = Script.parse(BytesIO(raw_redeem))
+        else:
+            redeem_script = None
+        tx_hash = self.sig_hash(input_index, redeem_script)
         combined = tx_in.script_sig + script_pubkey
         return combined.evaluate(tx_hash)
 
@@ -130,6 +140,22 @@ class Transaction:
         script_sig = Script([sig, sec_pubkey])
         self.tx_ins[input_index].script_sig = script_sig
         return self.verify_input(input_index)
+
+    def is_coinbase(self):
+        if len(self.tx_ins) != 1:
+            return False
+        first_input = self.tx_ins[0]
+        if first_input.prev_tx != b'\x00' * 32:
+            return False
+        if first_input.prev_index != 0xffffffff:
+            return False
+        return True
+
+    def coinbase_height(self):
+        if not self.is_coinbase():
+            return None
+        first_cmd = self.tx_ins[0].script_sig.cmds[0]
+        return int.from_bytes(first_cmd, 'little')
 
 
 class TransactionInput:
@@ -379,5 +405,21 @@ class TransactionTest(TestCase):
         tx_obj = Transaction(1, [tx_in], [change_output, target_output], 0, True)
         tx_obj.sign_input(0, private_key)
         print(tx_obj.serialize().hex())
+
+    def test_is_coinbase(self):
+        raw_tx = bytes.fromhex('01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5e03d71b07254d696e656420627920416e74506f6f6c20626a31312f4542312f4144362f43205914293101fabe6d6d678e2c8c34afc36896e7d9402824ed38e856676ee94bfdb0c6c4bcd8b2e5666a0400000000000000c7270000a5e00e00ffffffff01faf20b58000000001976a914338c84849423992471bffb1a54a8d9b1d69dc28a88ac00000000')
+        stream = BytesIO(raw_tx)
+        tx = Transaction.parse(stream)
+        self.assertTrue(tx.is_coinbase())
+
+    def test_coinbase_height(self):
+        raw_tx = bytes.fromhex('01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff5e03d71b07254d696e656420627920416e74506f6f6c20626a31312f4542312f4144362f43205914293101fabe6d6d678e2c8c34afc36896e7d9402824ed38e856676ee94bfdb0c6c4bcd8b2e5666a0400000000000000c7270000a5e00e00ffffffff01faf20b58000000001976a914338c84849423992471bffb1a54a8d9b1d69dc28a88ac00000000')
+        stream = BytesIO(raw_tx)
+        tx = Transaction.parse(stream)
+        self.assertEqual(tx.coinbase_height(), 465879)
+        raw_tx = bytes.fromhex('0100000001813f79011acb80925dfe69b3def355fe914bd1d96a3f5f71bf8303c6a989c7d1000000006b483045022100ed81ff192e75a3fd2304004dcadb746fa5e24c5031ccfcf21320b0277457c98f02207a986d955c6e0cb35d446a89d3f56100f4d7f67801c31967743a9c8e10615bed01210349fc4e631e3624a545de3f89f5d8684c7b8138bd94bdd531d2e213bf016b278afeffffff02a135ef01000000001976a914bc3b654dca7e56b04dca18f2566cdaf02e8d9ada88ac99c39800000000001976a9141c4bc762dd5423e332166702cb75f40df79fea1288ac19430600')
+        stream = BytesIO(raw_tx)
+        tx = Transaction.parse(stream)
+        self.assertIsNone(tx.coinbase_height())
 
 
