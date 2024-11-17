@@ -58,14 +58,14 @@ class Block:
         return bits_to_target(self.bits)
 
     def difficulty(self):
-        '''Returns the block difficulty based on the bits'''
+        """Returns the block difficulty based on the bits"""
         # note difficulty is (target of lowest difficulty) / (self's target)
         # the lowest difficulty has bits that equal 0xffff001d
         lowest = 0xffff * 256**(0x1d - 3)
         return lowest / self.target()
 
     def check_pow(self):
-        '''Returns whether this block satisfies proof of work'''
+        """Returns whether this block satisfies proof of work"""
         proof = int.from_bytes(hash256(self.serialize()), 'little')
         # return whether this integer is less than the target
         return proof < self.target()
